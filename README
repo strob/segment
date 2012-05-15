@@ -1,0 +1,9 @@
+simple library for macro-discretizing audio and video streams
+
+once media are "chunked," chunks can be analyzed as comparable units
+
+a few features are extracted, but not too many yet
+
+segment.py depends on numm:
+% apt-get install python-numm (debian wheezy)
+http://numm.org/numm 
