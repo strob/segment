@@ -3,22 +3,167 @@ import numpy
 import gst
 import colorsys
 import cv2
+import os
 
-class Cut(object):
+class FrameEater(object):
+    def peek(self):
+        "get output without resetting state"
+        pass
+    def pop(self):
+        "get output and reset state"
+        out = self.peek()
+        self.reset()
+        return out
+    def reset(self):
+        "reset state"
+        pass
+    def process(self, frame):
+        "take new frame"
+        pass
+    def serialize(self, fpath):
+        "write to disk"
+        pass
+
+class ImageToImage(FrameEater):
+    extension = "png"
+    def serialize(self, fpath):
+        numm.np2image(self.peek(), fpath + "." + self.extension)
+
+class Slitscan(ImageToImage):
     def __init__(self):
-        self.doc = {}
-        self.images = {}
-        self.absimages = {}
-        self.arrays = {}
+        self.slits = []
+    def process(self, frame):
+        self.slits.append(frame[:,frame.shape[1]/2])
+    def peek(self):
+        return numpy.array(self.slits).transpose(1,0,2)
+    def reset(self):
+        self.slits = []
 
-def discontinuity(a, b, threshold=0.1, col_threshold=10):
+class Oxscan(Slitscan):
+    def process(self, frame):
+        self.slits.append(frame.mean(axis=1).astype(numpy.uint8))
+
+class FirstFrame(ImageToImage):
+    def __init__(self):
+        self.first = None
+    def process(self, frame):
+        if self.first is None:
+            self.first = frame
+    def peek(self):
+        return self.first
+    def reset(self):
+        self.first = None
+
+class LastFrame(ImageToImage):
+    def process(self, frame):
+        self.last = frame
+    def peek(self):
+        return self.last
+
+class Composite(ImageToImage):
+    def __init__(self):
+        self.comp = None
+        self.nframes = 1
+
+    def process(self, frame):
+        if self.comp is None:
+            self.comp = frame.astype(int)
+        else:
+            self.nframes += 1
+            self.comp += frame
+
+    def peek(self):
+        return (self.comp / self.nframes).astype(numpy.uint8)
+    def reset(self):
+        self.comp = None
+        self.nframes = 1
+
+class ImageToMath(FrameEater):
+    def serialize(self, fpath):
+        numpy.savez(fpath + ".npz", **self.peek())
+
+class Flow(ImageToMath):
+    def __init__(self):
+        self.points = None
+        self.offset = 0
+        self.surf = cv2.SURF()
+
+    def process(self, frame):
+        gray = frame.mean(axis=2).astype(numpy.uint8)
+
+        if self.points is None:
+            keypoints, descriptions = self.surf.detect(gray, None, False)
+
+            if len(keypoints) < 2:
+                self.offset += 1
+                return
+
+            self.points = numpy.array([list(X.pt) + [X.size, X.angle, X.response] for X in keypoints])
+
+            self.features = descriptions.reshape((len(keypoints), -1))
+
+            self.prevpts = numpy.array([X.pt for X in keypoints], dtype=numpy.float32).reshape((-1,1,2))
+            self.flows = [self.prevpts.reshape((-1,2))]
+
+        else:
+            nextpts, status, err = cv2.calcOpticalFlowPyrLK(self.prevframe, gray, self.prevpts, None)
+            valid_flows = status.reshape(-1) == 1
+            new_flows = numpy.zeros(self.flows[0].shape)
+            new_flows[valid_flows] = nextpts.reshape((-1,2))[valid_flows]
+            self.flows.append(new_flows)
+            self.prevpts = nextpts
+
+        self.prevframe = gray
+
+    def peek(self):
+        return {"points": self.points,
+               "features": self.features,
+               "flows": self.flows,
+               "offset": self.offset}
+
+    def reset(self):
+        self.points = None
+        self.offset = 0
+
+class Histograms(ImageToMath):
+    "hue, saturation, & value histograms of a random (!) frame"
+    # XXX: diy with numpy ops
+    # XXX: should be composite or mid-frame?
+
+    def __init__(self):
+        self.frame = None
+
+    def process(self, frame):
+        if self.frame is None or numpy.random.random() < 0.1:
+            self.frame = frame
+    def peek(self):
+        out = {}
+        frame = self.frame
+        hsv = []
+        for y in range(frame.shape[0]):
+            for x in range(frame.shape[1]):
+                pixel = frame[y,x] / 255.0
+                hsv.append(colorsys.rgb_to_hsv(*pixel.tolist()))
+
+        # compute histogram
+        hsv = numpy.array(hsv)
+        for i, key in enumerate(('hue_hist', 'sat_hist', 'val_hist')):
+            histogram, _boundaries = numpy.histogram(hsv[:,i], bins=10)
+            histogram = histogram / float(len(hsv)) # normalize w/r/t number of pixels
+            out[key] = histogram
+
+        avg_pixel = frame.mean(axis=0).mean(axis=0) / 255.0
+        out['avg_hsv'] = numpy.array([int(X*255) for X in colorsys.rgb_to_hsv(*avg_pixel.tolist())])
+        return out
+
+def discontinuity(a, b, threshold=0.2, hist_scale=0.5, col_threshold=10):
     # heuristic to determine if there is a discontinuity between a and b
 
     # compare b&w histograms
     a_hist, _boundaries = numpy.histogram(a.mean(axis=2), bins=10, range=(0, 255))
     b_hist, _boundaries = numpy.histogram(b.mean(axis=2), bins=10, range=(0, 255))
 
-    hist_dist = sum(abs(a_hist - b_hist)) / float(a.shape[0]*a.shape[1])
+    hist_dist = hist_scale * sum(abs(a_hist - b_hist)) / float(a.shape[0]*a.shape[1])
 
     # compare averaged columns
     a_cols = a.mean(axis=1)
@@ -27,135 +172,86 @@ def discontinuity(a, b, threshold=0.1, col_threshold=10):
 
     return hist_dist + col_dist > threshold
 
-def slitscans(np, d):
-    d.images['left_slit'] = np[:,:,0].transpose(1,0,2)
-    d.images['right_slit'] = np[:,:,-1].transpose(1,0,2)
-    d.images['mid_slit'] = np[:,:,np.shape[2]/2].transpose(1,0,2)
-    d.images['avg_slit'] = np.mean(axis=2).transpose(1,0,2).astype(numpy.uint8)
+class Analysis(FrameEater):
+    def __init__(self, everyframe=None, post=None):
+        # these receive frames, but aren't yielded or serialized.
+        # you are responsible ...
+        self.everyframe = everyframe
+        # called on output every "peek"
+        self.post = None
 
-def hsv_metrics(np, d):
-    frame = np[np.shape[0]/2]
+        self.machines = {"slitscan":Slitscan(), 
+                         "oxscan": Oxscan(),
+                         "first_frame": FirstFrame(),
+                         "last_frame": LastFrame(),
+                         "composite": Composite(), 
+                         "histograms": Histograms(), 
+                         "flow": Flow()}
 
-    # transform into HSV
-    # XXX: diy with numpy ops
-    hsv = []
-    for y in range(frame.shape[0]):
-        for x in range(frame.shape[1]):
-            pixel = frame[y,x] / 255.0
-            hsv.append(colorsys.rgb_to_hsv(*pixel.tolist()))
+    def process(self, frame):
+        for m in self.machines.values():
+            m.process(frame)
+        if self.everyframe is not None:
+            self.everyframe.process(frame)
 
-    # compute histogram
-    hsv = numpy.array(hsv)
-    for i, key in enumerate(('hue_hist', 'sat_hist', 'val_hist')):
-        histogram, _boundaries = numpy.histogram(hsv[:,i], bins=10)
-        histogram = histogram / float(len(hsv)) # normalize w/r/t number of pixels
-        d.arrays[key] = histogram.tolist()
+    def peek(self):
+        out = {k: v.peek() for k,v in self.machines.items()}
+        if self.post is not None:
+            return self.post(out)
+        return out
 
-    avg_pixel = frame.mean(axis=0).mean(axis=0) / 255.0
-    d.doc['avg_hsv'] = [int(X*255) for X in colorsys.rgb_to_hsv(*avg_pixel.tolist())]
+    def reset(self):
+        for m in self.machines.values():
+            m.reset()
 
-def thumbstrips(np, d, num_strips=3):
-    max_width = np.shape[2]
-    step = max_width / num_strips
-    periods = [int(step*X) for X in range(1, num_strips+1)]
-    for p_idx, period in enumerate(periods):
-        assert period <= max_width
-        out = numpy.zeros((np.shape[1], np.shape[0], 3), numpy.uint8)
-        for dx, fr in enumerate(np):
-            if dx % period > 0:
-                continue
-            # center
-            sx = max_width/2 - period/2
-            slice_width = min(out.shape[1]-dx, period)
+    def serialize(self, dirname):
+        if not os.path.isdir(dirname):
+            os.makedirs(dirname)
 
-            out[:,dx:dx+slice_width] = fr[:,sx:sx+slice_width]
-        d.images['thumbstrip-%d' % (p_idx)] = out
+        for name, machine in self.machines.items():
+            machine.serialize(os.path.join(dirname, name))
 
-def frames(np, d):
-    d.images['composite_frame'] = np.mean(axis=0).astype(numpy.uint8)
-    d.images['first_frame'] = np[0]
-    d.images['last_frame'] = np[-1]
-    d.images['mid_frame'] = np[np.shape[0]/2]
+def analyze(path, height=96, min_n_frames=25, max_n_frames=3000):
+    analysis = Analysis()
+    nframes = 0
+    cur_is_hard = True
 
-def moduloframes(np, d, nsecs=5):
-    # save thumbnails every five seconds, irrespective of segmentation
-
-    prev_t = 0.02
-    for fr in np:
-        t = fr.timestamp / float(gst.SECOND)
-        if t%nsecs < prev_t%nsecs:
-            d.absimages["mod_%d" % (t)] = fr
-        prev_t = t
-
-def features(np, d):
-    # compute features on the first frame, and track their motion through the cut
-
-    grayscale = np.mean(axis=3).astype(numpy.uint8)
-    firstframe = grayscale[0]
-
-    surf = cv2.SURF(400)
-    keypoints, descriptions = surf.detect(firstframe, None, False)
-    d.arrays['keypoints'] = numpy.array([list(X.pt).extend([X.size, X.angle, X.response]) for X in keypoints])
-    if len(keypoints) == 0:
-        print 'no features'
-        return
-    d.arrays['keypoint_features'] = descriptions.reshape((len(keypoints), -1))
-
-    prevframe = firstframe
-    prevpts = numpy.array([X.pt for X in keypoints], dtype=numpy.float32).reshape((-1,1,2))
-    flows = numpy.zeros((len(keypoints), np.shape[0], 2))
-    flows[:,0] = prevpts.reshape((-1,2))
-
-    for idx,frame in enumerate(grayscale[1:]):
-        nextpts, status, err = cv2.calcOpticalFlowPyrLK(prevframe, frame, prevpts, None)
-        valid_flows = status.reshape(-1) == 1
-        flows[:,idx+1][valid_flows] = nextpts.reshape((-1,2))[valid_flows]
-        prevframe = frame
-        prevpts = nextpts
-    d.arrays['flows'] = flows
-
-def cut_from_frames(cur_cut, is_hard, end_time=None):
-    d = Cut()
-
-    d.doc['hardcut'] = is_hard;
-
-    d.doc['start'] = cur_cut[0].timestamp / float(gst.SECOND)
-
-    if end_time is None:
-        d.doc['duration'] = (cur_cut[-1].timestamp - cur_cut[0].timestamp) / float(gst.SECOND)
-    else:
-        d.doc['duration'] = (end_time - cur_cut[0].timestamp) / float(gst.SECOND)
-
-    np = numpy.array(cur_cut)
-    slitscans(np, d)
-    # thumbstrips(np, d)
-    frames(np, d)
-    moduloframes(cur_cut, d)    #takes cur_cut instead of np because needs timestamps
-    hsv_metrics(np, d)
-    features(np, d)
-
-    return d
-
-def analyze(path, height=96, min_n_frames=15, max_n_frames=3000):
-    cur_cut = []
-    cur_is_hard = False
-    for frame in numm.video_frames(path, height=96, fps=25):
-        if len(cur_cut)>min_n_frames and discontinuity(cur_cut[-1], frame, threshold=0.2):
+    prevframe  = None
+    prevprevframe = None
+    for frame in numm.video_frames(path, height=height, fps=25):
+        if nframes>min_n_frames and discontinuity(prevframe, frame) and discontinuity(prevprevframe, frame):
             # HARD CUT
-            yield cut_from_frames(cur_cut, cur_is_hard, frame.timestamp)
+            yield (analysis.pop(), cur_is_hard)
+            nframes = 0
             cur_is_hard = True
-            cur_cut = [frame]
-        elif len(cur_cut)>min_n_frames and (len(cur_cut) >= max_n_frames or discontinuity(cur_cut[0], frame, threshold=0.4)):
-            # SOFT CUT (or max_n_frames)
-            yield cut_from_frames(cur_cut, cur_is_hard, frame.timestamp)
-            cur_is_hard = False
-            cur_cut = [frame]
-        else:
-            cur_cut.append(frame)
-    yield cut_from_frames(cur_cut, cur_is_hard)
 
-def serialize(videopath, directory=None):
-    import os, pickle, time
+        elif nframes >= max_n_frames:
+            # SOFT CUT (max_n_frames)
+            # XXX: bring back metric to segment on slow changes
+            yield (analysis.pop(), cur_is_hard)
+            cur_is_hard = False
+            nframes = 0
+
+        analysis.process(frame)
+        nframes += 1
+        prevprevframe = prevframe
+        prevframe = frame
+    yield (analysis.pop(), cur_is_hard)
+
+class EveryNSecs(FrameEater):
+    def __init__(self, outpattern="m5_%d.png", nsecs=5):
+        self.outpattern = outpattern
+        self.nsecs=nsecs
+        self.p=0.2
+
+    def process(self, frame):
+        t = frame.timestamp / float(gst.SECOND)
+        if t % self.nsecs < self.p % self.nsecs:
+            numm.np2image(frame, self.outpattern % (t))
+        self.p=t
+
+def serialize(videopath, directory=None, min_n_frames=25, max_n_frames=3000):
+    import json, time
 
     t0 = time.time()
 
@@ -169,22 +265,56 @@ def serialize(videopath, directory=None):
         os.makedirs(absdir)
 
     doc = []
-    for idx, c in enumerate(analyze(videopath)):
-        subdir = os.path.join(directory, '%d' % (idx))
-        if not os.path.isdir(subdir):
-            os.makedirs(subdir)
+    def cut_doc(ishard, firstframe, nextframe):
+        return {'start': firstframe.timestamp / float(gst.SECOND),
+                'duration': (nextframe.timestamp - firstframe.timestamp) / float(gst.SECOND),
+                'hard': ishard
+}
 
-        for name, im in c.images.iteritems():
-            numm.np2image(im, os.path.join(subdir, '%s.png' % (name)))
-        for name, np in c.arrays.iteritems():
-            numpy.save(os.path.join(subdir,  '%s.npy' % (name)), np)
+    everyframe= EveryNSecs(outpattern=os.path.join(absdir, "mod_%d.png"), nsecs=5)
 
-        for name, im in c.absimages.iteritems():
-            numm.np2image(im, os.path.join(absdir, '%s.png' % (name)))
+    # FIXME: repeated code (so as to serialize & post-process ...)
+    analysis = Analysis(everyframe=everyframe)
+    nframes = 0
+    ncuts = 0
+    cur_is_hard = True
 
-        doc.append(c.doc)
+    prevframe  = None
+    firstframe = None
+    for frame in numm.video_frames(videopath, height=96, fps=25):
+        if firstframe is None:
+            firstframe = frame
 
-    pickle.dump(doc, open(os.path.join(directory, 'video.pickle'), 'w'))
+        if nframes>min_n_frames and discontinuity(prevframe, frame):
+            # HARD CUT
+            doc.append(cut_doc(cur_is_hard, firstframe, frame))
+            analysis.serialize(os.path.join(directory, str(ncuts)))
+            analysis.reset()
+            firstframe = frame
+            nframes = 0
+            ncuts += 1
+            cur_is_hard = True
+
+        elif nframes >= max_n_frames:
+            # SOFT CUT (max_n_frames)
+            # XXX: bring back metric to segment on slow changes
+            doc.append(cut_doc(cur_is_hard, firstframe, frame))
+            analysis.serialize(os.path.join(directory, str(ncuts)))
+            analysis.reset()
+            firstframe = frame
+            cur_is_hard = False
+            nframes = 0
+            ncuts += 1
+
+        analysis.process(frame)
+        nframes += 1
+        prevframe = frame
+
+    doc.append(cut_doc(cur_is_hard, firstframe, frame))
+    analysis.serialize(os.path.join(directory, str(ncuts)))
+    analysis.reset()
+
+    json.dump(doc, open(os.path.join(directory, 'video.json'), 'w'))
 
     dur = doc[-1]['start'] + doc[-1]['duration']
     dt = time.time() - t0
