@@ -116,10 +116,13 @@ class Flow(ImageToMath):
         self.prevframe = gray
 
     def peek(self):
-        return {"points": self.points,
-               "features": self.features,
-               "flows": self.flows,
-               "offset": self.offset}
+        if self.points is not None:
+            return {"points": self.points,
+                    "features": self.features,
+                    "flows": self.flows,
+                    "offset": self.offset}
+        else: 
+            return {}
 
     def reset(self):
         self.points = None
