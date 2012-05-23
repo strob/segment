@@ -268,11 +268,11 @@ def serialize(videopath, directory=None, min_n_frames=25, max_n_frames=3000):
         os.makedirs(absdir)
 
     doc = []
-    def cut_doc(ishard, firstframe, nextframe):
-        return {'start': firstframe.timestamp / float(gst.SECOND),
-                'duration': (nextframe.timestamp - firstframe.timestamp) / float(gst.SECOND),
+    def cut_doc(ishard, start, duration):
+        return {'start': start,
+                'duration': duration,
                 'hard': ishard
-}
+                }
 
     everyframe= EveryNSecs(outpattern=os.path.join(absdir, "mod_%d.png"), nsecs=5)
 
@@ -284,13 +284,14 @@ def serialize(videopath, directory=None, min_n_frames=25, max_n_frames=3000):
 
     prevframe  = None
     firstframe = None
-    for frame in numm.video_frames(videopath, height=96, fps=25):
+    count = 0
+    for f_idx, frame in enumerate(numm.video_frames(videopath, height=96, fps=25)):
         if firstframe is None:
             firstframe = frame
 
         if nframes>min_n_frames and discontinuity(prevframe, frame):
             # HARD CUT
-            doc.append(cut_doc(cur_is_hard, firstframe, frame))
+            doc.append(cut_doc(cur_is_hard, (f_idx-nframes)/25.0, nframes/25.0))
             analysis.serialize(os.path.join(directory, str(ncuts)))
             analysis.reset()
             firstframe = frame
@@ -301,7 +302,7 @@ def serialize(videopath, directory=None, min_n_frames=25, max_n_frames=3000):
         elif nframes >= max_n_frames:
             # SOFT CUT (max_n_frames)
             # XXX: bring back metric to segment on slow changes
-            doc.append(cut_doc(cur_is_hard, firstframe, frame))
+            doc.append(cut_doc(cur_is_hard, (f_idx-nframes)/25.0, nframes/25.0))
             analysis.serialize(os.path.join(directory, str(ncuts)))
             analysis.reset()
             firstframe = frame
@@ -312,8 +313,9 @@ def serialize(videopath, directory=None, min_n_frames=25, max_n_frames=3000):
         analysis.process(frame)
         nframes += 1
         prevframe = frame
+        count += 1
 
-    doc.append(cut_doc(cur_is_hard, firstframe, frame))
+    doc.append(cut_doc(cur_is_hard, (count-nframes)/25.0, nframes/25.0))
     analysis.serialize(os.path.join(directory, str(ncuts)))
     analysis.reset()
 
