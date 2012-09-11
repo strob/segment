@@ -3,6 +3,7 @@
 import sys
 import argparse
 import os
+import tempfile
 
 parser = argparse.ArgumentParser(description='segment: chop & analyze a/v')
 
@@ -25,7 +26,7 @@ import segment.video as v
 for f in args.files:
     print 'segmenting %s' % (f)
 
-    tdir = '.%s.analysis_in_progress' % (f)
+    tdir = tempfile.mkdtemp(suffix='.analysis_in_progress')
 
     if args.audio:
         a.serialize(f, tdir)
