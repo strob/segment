@@ -159,7 +159,7 @@ class Histograms(ImageToMath):
         out['avg_hsv'] = numpy.array([int(X*255) for X in colorsys.rgb_to_hsv(*avg_pixel.tolist())])
         return out
 
-def discontinuity(a, b, threshold=0.2, hist_scale=0.5, col_threshold=10):
+def discontinuity(a, b, threshold=0.2, hist_scale=0.5, col_scale=1, col_threshold=10):
     # heuristic to determine if there is a discontinuity between a and b
 
     # compare b&w histograms
@@ -171,7 +171,7 @@ def discontinuity(a, b, threshold=0.2, hist_scale=0.5, col_threshold=10):
     # compare averaged columns
     a_cols = a.mean(axis=1)
     b_cols = b.mean(axis=1)
-    col_dist = sum((abs(a_cols - b_cols).mean(axis=1) > col_threshold).flat) / float(a.shape[1])
+    col_dist = col_scale * sum((abs(a_cols - b_cols).mean(axis=1) > col_threshold).flat) / float(a.shape[1])
 
     return hist_dist + col_dist > threshold
 

@@ -6,18 +6,19 @@ sample_rate=8000
 windowsize =500
 stepsize   =100
 
+# thanks, njoliat!
+BARK = [20, 100, 200, 300, 400, 510, 630, 770, 920, 1080, 1270, 1480, 1720, 2000, 2320, 2700, 3150, 3700, 4400, 5300, 6400, 7700, 9500, 12000, 15500]
+# damn you, nyquist
+BARK = filter(lambda x: x<sample_rate/2, BARK)
+FREQS = numpy.fft.fftfreq(windowsize, 1.0/sample_rate)    
+BARK_FREQ = [(abs(FREQS - freq)).argmin() for freq in BARK]
+
+
 class Chunk(object):
     def __init__(self):
         self.doc = {}
 
 def bark(fourier):
-    # thanks, njoliat!
-    BARK = [20, 100, 200, 300, 400, 510, 630, 770, 920, 1080, 1270, 1480, 1720, 2000, 2320, 2700, 3150, 3700, 4400, 5300, 6400, 7700, 9500, 12000, 15500]
-    # damn you, nyquist
-    BARK = filter(lambda x: x<sample_rate/2, BARK)
-    FREQS = numpy.fft.fftfreq(windowsize, 1.0/sample_rate)    
-    BARK_FREQ = [(abs(FREQS - freq)).argmin() for freq in BARK]
-
     bark_spectrum = numpy.array([fourier[BARK_FREQ[i]:BARK_FREQ[i+1]].sum() \
                     for i in range(len(BARK_FREQ) - 1)])
     return bark_spectrum
@@ -91,7 +92,7 @@ def chunks(path):
     c.doc['loudness'] = abs(acc).mean()
 
 def serialize(audiofile, directory=None):
-    import os, pickle, time
+    import os, json, time
     t0 = time.time()
 
     if directory is None:
@@ -107,7 +108,7 @@ def serialize(audiofile, directory=None):
     dt = time.time() - t0
     ratio = dur / dt
 
-    pickle.dump(doc, open(os.path.join(directory, 'audio.pickle'), 'w'))
+    json.dump(doc, open(os.path.join(directory, 'audio.json'), 'w'))
 
     print 'analyzed a %ds audio file in %ds (%.2fx)' % (dur, dt, ratio)
 

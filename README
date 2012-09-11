@@ -4,6 +4,25 @@ once media are "chunked," chunks can be analyzed as comparable units
 
 a few features are extracted, but not too many yet
 
+(theoretically) stable object-oriented API's are provided in python and javascript,
+which provide in-progress as well as serialized representations of segment-analysis.
+
+SegmentedSource:
+  uid: str
+  segments(): [Segment] (python: generator, js: cb)
+  segmentAt(t): Segment
+
+Segment:
+  "dictionary-like key-value store for analysis"
+  start: time
+  duration: time
+  index: int
+  parent: SegmentedSource
+  getKey(key): payload (python: numpy, javascript: cb/base64-encoded)
+  keyPath(key): path to serialized representation
+  keys(): 
+  
+
 segment.py depends on numm:
 % apt-get install python-numm (debian wheezy)
 http://numm.org/numm 

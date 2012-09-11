@@ -10,8 +10,12 @@ parser.add_argument(
     '--audio', default=False, action='store_true',
     help='analyze audio')
 parser.add_argument(
-    '--video', default=True, action='store_true',
-    help='analyze video')
+    '--novideo', default=False, action='store_true',
+    help='only analyze audio')
+parser.add_argument(
+    '--outdir', default='',
+    help='location for analysis to be stored')
+
 
 parser.add_argument(
     'files', nargs='+',
@@ -19,17 +23,22 @@ parser.add_argument(
 
 args = parser.parse_args()
 
-import segment.audio as a
 import segment.video as v
+import segment.images as i
 
 for f in args.files:
     print 'segmenting %s' % (f)
 
-    tdir = '.%s.analysis_in_progress' % (f)
+    fdir = os.path.join(args.outdir, os.path.basename(f) + '.analysis')
 
     if args.audio:
-        a.serialize(f, tdir)
-    if args.video:
-        v.serialize(f, tdir)
+        import segment.audio as a
+        a.serialize(f, fdir)
+    if not args.novideo:
+        tdir = os.path.join(args.outdir, '.' + os.path.basename(f) + '.analysis_in_progress')
+        if os.path.isdir(f):
+            i.serialize(f, tdir)
+        else:
+            v.serialize(f, tdir)
 
-    os.rename(tdir, '%s.analysis' % (f))
+        os.rename(tdir, fdir)
