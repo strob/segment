@@ -82,6 +82,20 @@ class ImageToMath(FrameEater):
     def serialize(self, fpath):
         numpy.savez(fpath + ".npz", **self.peek())
 
+class Affinity(ImageToMath):
+    "Stores an affine transformation from each frame to the previous"
+    def __init__(self):
+        self.reset()
+    def process(self, frame):
+        if self.prev is not None:
+            self.affs.append(cv2.estimateRigidTransform(frame, self.prev, True))
+        self.prev = frame
+    def peek(self):
+        return {"affines": numpy.array(self.affs)}
+    def reset(self):
+        self.affs = []
+        self.prev = None
+        
 class Flow(ImageToMath):
     def __init__(self):
         self.points = None
@@ -189,7 +203,8 @@ class Analysis(FrameEater):
                          "last_frame": LastFrame(),
                          "composite": Composite(), 
                          "histograms": Histograms(), 
-                         "flow": Flow()}
+                         "flow": Flow(),
+                         "affinity": Affinity()}
 
     def process(self, frame):
         for m in self.machines.values():
