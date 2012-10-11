@@ -4,6 +4,7 @@ import gst
 import colorsys
 import cv2
 import os
+import Image
 
 class FrameEater(object):
     def peek(self):
@@ -17,7 +18,7 @@ class FrameEater(object):
     def reset(self):
         "reset state"
         pass
-    def process(self, frame):
+    def process(self, frame, thumb):
         "take new frame"
         pass
     def serialize(self, fpath):
@@ -32,31 +33,31 @@ class ImageToImage(FrameEater):
 class Slitscan(ImageToImage):
     def __init__(self):
         self.slits = []
-    def process(self, frame):
-        self.slits.append(frame[:,frame.shape[1]/2])
+    def process(self, frame, thumb):
+        self.slits.append(thumb[:,thumb.shape[1]/2])
     def peek(self):
         return numpy.array(self.slits).transpose(1,0,2)
     def reset(self):
         self.slits = []
 
 class Oxscan(Slitscan):
-    def process(self, frame):
-        self.slits.append(frame.mean(axis=1).astype(numpy.uint8))
+    def process(self, frame, thumb):
+        self.slits.append(thumb.mean(axis=1).astype(numpy.uint8))
 
 class FirstFrame(ImageToImage):
     def __init__(self):
         self.first = None
-    def process(self, frame):
+    def process(self, frame, thumb):
         if self.first is None:
-            self.first = frame
+            self.first = thumb
     def peek(self):
         return self.first
     def reset(self):
         self.first = None
 
 class LastFrame(ImageToImage):
-    def process(self, frame):
-        self.last = frame
+    def process(self, frame, thumb):
+        self.last = thumb
     def peek(self):
         return self.last
 
@@ -65,12 +66,12 @@ class Composite(ImageToImage):
         self.comp = None
         self.nframes = 1
 
-    def process(self, frame):
+    def process(self, frame, thumb):
         if self.comp is None:
-            self.comp = frame.astype(int)
+            self.comp = thumb.astype(int)
         else:
             self.nframes += 1
-            self.comp += frame
+            self.comp += thumb
 
     def peek(self):
         return (self.comp / self.nframes).astype(numpy.uint8)
@@ -86,7 +87,7 @@ class Affinity(ImageToMath):
     "Stores an affine transformation from each frame to the previous"
     def __init__(self):
         self.reset()
-    def process(self, frame):
+    def process(self, frame, thumb):
         if self.prev is not None:
             self.affs.append(cv2.estimateRigidTransform(frame, self.prev, True))
         self.prev = frame
@@ -100,10 +101,10 @@ class Flow(ImageToMath):
     def __init__(self):
         self.points = None
         self.offset = 0
-        self.surf = cv2.SURF()
+        self.surf = cv2.SURF()#750)
 
-    def process(self, frame):
-        gray = frame.mean(axis=2).astype(numpy.uint8)
+    def process(self, frame, thumb):
+        gray = thumb.mean(axis=2).astype(numpy.uint8)
 
         if self.points is None:
             keypoints, descriptions = self.surf.detect(gray, None, False)
@@ -150,9 +151,9 @@ class Histograms(ImageToMath):
     def __init__(self):
         self.frame = None
 
-    def process(self, frame):
+    def process(self, frame, thumb):
         if self.frame is None or numpy.random.random() < 0.1:
-            self.frame = frame
+            self.frame = thumb
     def peek(self):
         out = {}
         frame = self.frame
@@ -206,11 +207,11 @@ class Analysis(FrameEater):
                          "flow": Flow(),
                          "affinity": Affinity()}
 
-    def process(self, frame):
+    def process(self, frame, thumb):
         for m in self.machines.values():
-            m.process(frame)
+            m.process(frame, thumb)
         if self.everyframe is not None:
-            self.everyframe.process(frame)
+            self.everyframe.process(frame, thumb)
 
     def peek(self):
         out = {k: v.peek() for k,v in self.machines.items()}
@@ -262,10 +263,10 @@ class EveryNSecs(FrameEater):
         self.nsecs=nsecs
         self.p=0.2
 
-    def process(self, frame):
+    def process(self, frame, thumb):
         t = frame.timestamp / float(gst.SECOND)
         if t % self.nsecs < self.p % self.nsecs:
-            numm.np2image(frame, self.outpattern % (t))
+            numm.np2image(thumb, self.outpattern % (t))
         self.p=t
 
 def serialize(videopath, directory=None, min_n_frames=25, max_n_frames=3000):
@@ -300,11 +301,13 @@ def serialize(videopath, directory=None, min_n_frames=25, max_n_frames=3000):
     prevframe  = None
     firstframe = None
     count = 0
-    for f_idx, frame in enumerate(numm.video_frames(videopath, height=96, fps=25)):
+    for f_idx, frame in enumerate(numm.video_frames(videopath, height=None, fps=25)):
         if firstframe is None:
             firstframe = frame
 
-        if nframes>min_n_frames and discontinuity(prevframe, frame):
+        thumb = numpy.array(Image.fromarray(frame).resize(((96*frame.shape[1])/frame.shape[0], 96)))
+
+        if nframes>min_n_frames and discontinuity(prevthumb, thumb):
             # HARD CUT
             doc.append(cut_doc(cur_is_hard, (f_idx-nframes)/25.0, nframes/25.0))
             analysis.serialize(os.path.join(directory, str(ncuts)))
@@ -325,9 +328,10 @@ def serialize(videopath, directory=None, min_n_frames=25, max_n_frames=3000):
             nframes = 0
             ncuts += 1
 
-        analysis.process(frame)
+        analysis.process(frame, thumb)
         nframes += 1
         prevframe = frame
+        prevthumb = thumb
         count += 1
 
     doc.append(cut_doc(cur_is_hard, (count-nframes)/25.0, nframes/25.0))
