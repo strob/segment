@@ -33,4 +33,7 @@ for f in args.files:
     if args.video:
         v.serialize(f, tdir)
 
-    os.rename(tdir, '%s.analysis' % (f))
+    # Strip extension
+    extensionless_path = '.'.join(f.split('.')[:-1])
+
+    os.rename(tdir, '%s.analysis' % (extensionless_path))
