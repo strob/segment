@@ -60,6 +60,44 @@ class LastFrame(ImageToImage):
     def peek(self):
         return self.last
 
+def _compose(f, g):
+    "f(g(x)) = (f * g) * x"
+
+    f = numpy.array(f)
+    g = numpy.array(g)
+
+    f0 = numpy.matrix([f[0], f[1], [0, 0, 1]])
+    g0 = numpy.matrix([g[0], g[1], [0, 0, 1]])
+    return numpy.array(f0 * g0)[:2]
+def _translate(f, x,y):
+    out= f.copy()
+    out[0,2]+=x
+    out[1,2]+=y
+    return out
+
+class Periphery(ImageToImage):
+    "Renders the cut into a 'periphery' image"
+    # XXX: HOWTO make it fit w/efficient one-pass algorithm?
+    # XXX: Redundant, with "Affinity" -- somehow act on result?
+    def __init__(self, w=400,h=400):
+        self.w=w
+        self.h=h
+        self.reset() 
+    def process(self, frame):
+        if self.prev is not None:
+            affine= cv2.estimateRigidTransform(frame, self.prev, True)
+            self.paff = _compose(affine, self.paff)
+        warp = cv2.warpAffine(frame, _translate(self.paff,(self.w/2)-60,(self.h/2)-48), (self.w, self.h))
+        self.out[warp>0] = warp[warp>0]
+        
+        self.prev = frame
+    def peek(self):
+        return self.out
+    def reset(self):
+        self.out = numpy.zeros((self.h,self.w,3), numpy.uint8)
+        self.prev= None
+        self.paff= numpy.array([[1.0,0,0],[0,1.0,0]]) # identity
+
 class Composite(ImageToImage):
     def __init__(self):
         self.comp = None
@@ -202,6 +240,7 @@ class Analysis(FrameEater):
                          "first_frame": FirstFrame(),
                          "last_frame": LastFrame(),
                          "composite": Composite(), 
+                         "periphery": Periphery(), 
                          "histograms": Histograms(), 
                          "flow": Flow(),
                          "affinity": Affinity()}
