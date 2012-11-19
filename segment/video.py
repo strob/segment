@@ -144,7 +144,7 @@ class Flow(ImageToMath):
         gray = frame.mean(axis=2).astype(numpy.uint8)
 
         if self.points is None:
-            keypoints, descriptions = self.surf.detect(gray, None, False)
+            keypoints, descriptions = self.surf.detectAndCompute(gray, None)#, False)
 
             if len(keypoints) < 2:
                 self.offset += 1
