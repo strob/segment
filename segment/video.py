@@ -133,7 +133,7 @@ class Affinity(ImageToMath):
     def reset(self):
         self.affs = []
         self.prev = None
-        
+
 class Flow(ImageToMath):
     def __init__(self):
         self.points = None
@@ -268,7 +268,7 @@ class Analysis(FrameEater):
         for name, machine in self.machines.items():
             machine.serialize(os.path.join(dirname, name))
 
-def analyze(path, height=96, min_n_frames=25, max_n_frames=3000):
+def analyze(path, width=120, height=96, min_n_frames=25, max_n_frames=3000):
     analysis = Analysis()
     nframes = 0
     cur_is_hard = True
@@ -299,10 +299,11 @@ class EveryNSecs(FrameEater):
     def __init__(self, outpattern="m5_%d.png", nsecs=5):
         self.outpattern = outpattern
         self.nsecs=nsecs
-        self.p=0.2
+        self.p=0.0
 
     def process(self, frame):
-        t = frame.timestamp / float(gst.SECOND)
+        # t = frame.timestamp / float(gst.SECOND)
+        t = self.p + 0.04
         if t % self.nsecs < self.p % self.nsecs:
             numm.np2image(frame, self.outpattern % (t))
         self.p=t
