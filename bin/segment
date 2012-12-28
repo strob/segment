@@ -11,7 +11,7 @@ parser.add_argument(
     '--audio', default=False, action='store_true',
     help='analyze audio')
 parser.add_argument(
-    '--video', default=True, action='store_true',
+    '--video', default=False, action='store_true',
     help='analyze video')
 
 parser.add_argument(
@@ -31,7 +31,7 @@ for f in args.files:
 
     if args.audio:
         a.serialize(f, tdir)
-    if args.video:
+    if (not args.audio) or args.video:
         v.serialize(f, tdir)
 
     # Strip extension
